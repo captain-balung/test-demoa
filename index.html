@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>斷線恐龍跳躍遊戲</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Arial, "Noto Sans TC", sans-serif;
+      background: #f7f7f7;
+      color: #222;
+      display: flex;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 24px;
+    }
+    .wrap {
+      width: min(960px, 100%);
+    }
+    h1 {
+      margin: 0 0 12px;
+      font-size: 24px;
+    }
+    .toolbar {
+      display: flex;
+      gap: 18px;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+    .scores {
+      display: flex;
+      gap: 18px;
+      font-size: 14px;
+    }
+    button {
+      border: 1px solid #999;
+      background: white;
+      color: #222;
+      border-radius: 10px;
+      padding: 9px 14px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    button:hover { background: #eee; }
+
+    .game-box {
+      position: relative;
+      border: 1px solid #bbb;
+      background: white;
+      border-radius: 14px;
+      overflow: hidden;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: auto;
+      touch-action: manipulation;
+    }
+
+    .message {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      pointer-events: none;
+    }
+    .message-card {
+      background: rgba(255,255,255,.94);
+      border: 1px solid #bbb;
+      border-radius: 12px;
+      padding: 14px 18px;
+    }
+    .message-card strong {
+      display: block;
+      margin-bottom: 5px;
+      font-size: 18px;
+    }
+    .hidden { display: none; }
+
+    .info {
+      margin-top: 10px;
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px;
+      color: #666;
+      font-size: 14px;
+    }
+
+    .mobile-jump {
+      width: 100%;
+      margin-top: 14px;
+      padding: 14px;
+      font-size: 18px;
+      font-weight: bold;
+    }
+
+    @media (min-width: 700px) {
+      .mobile-jump { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <h1>🦖 斷線恐龍跳躍遊戲</h1>
+
+    <div class="toolbar">
+      <div class="scores">
+        <span>分數：<strong id="score">00000</strong></span>
+        <span>最高：<strong id="highScore">00000</strong></span>
+      </div>
+      <button id="restartBtn" type="button">重新開始</button>
+    </div>
+
+    <div class="game-box">
+      <canvas id="gameCanvas" width="900" height="330"></canvas>
+
+      <div id="message" class="message">
+        <div class="message-card">
+          <strong id="messageTitle">按空白鍵開始</strong>
+          <span id="messageHint">空白鍵／↑／點擊畫面：跳躍</span>
+        </div>
+      </div>
+    </div>
+
+    <button id="jumpBtn" class="mobile-jump" type="button">跳躍</button>
+
+    <div class="info">
+      <span>避開仙人掌，遊戲速度會逐漸加快。</span>
+      <span id="speedText">速度 1.0×</span>
+    </div>
+  </main>
+
+  <script>
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+
+    const scoreEl = document.getElementById("score");
+    const highScoreEl = document.getElementById("highScore");
+    const speedText = document.getElementById("speedText");
+
+    const message = document.getElementById("message");
+    const messageTitle = document.getElementById("messageTitle");
+    const messageHint = document.getElementById("messageHint");
+
+    const restartBtn = document.getElementById("restartBtn");
+    const jumpBtn = document.getElementById("jumpBtn");
+
+    const W = canvas.width;
+    const H = canvas.height;
+    const groundY = 268;
+
+    let running = false;
+    let gameOver = false;
+    let lastTime = 0;
+
+    let score = 0;
+    let highScore = 0;
+    let speed = 7;
+
+    let spawnTimer = 0;
+    let nextSpawn = 1000;
+    let groundOffset = 0;
+
+    let obstacles = [];
+    let clouds = [];
+
+    const dino = {
+      x: 92,
+      y: groundY - 52,
+      w: 46,
+      h: 52,
+      vy: 0,
+      gravity: 0.92,
+      jumpPower: -16.5,
+      grounded: true,
+      legPhase: 0
+    };
+
+    function showMessage(title, hint) {
+      messageTitle.textContent = title;
+      messageHint.textContent = hint;
+      message.classList.remove("hidden");
+    }
+
+    function hideMessage() {
+      message.classList.add("hidden");
+    }
+
+    function resetGame() {
+      running = false;
+      gameOver = false;
+      lastTime = 0;
+
+      score = 0;
+      speed = 7;
+      spawnTimer = 0;
+      nextSpawn = 900 + Math.random() * 650;
+      groundOffset = 0;
+
+      obstacles = [];
+      clouds = [
+        { x: 260, y: 70, s: 1 },
+        { x: 600, y: 105, s: 0.75 },
+        { x: 830, y: 55, s: 0.9 }
+      ];
+
+      dino.y = groundY - dino.h;
+      dino.vy = 0;
+      dino.grounded = true;
+      dino.legPhase = 0;
+
+      updateUI();
+      showMessage("按空白鍵開始", "空白鍵／↑／點擊畫面：跳躍");
+      draw();
+    }
+
+    function startGame() {
+      if (gameOver) {
+        resetGame();
+      }
+
+      if (!running) {
+        running = true;
+        hideMessage();
+        lastTime = performance.now();
+        requestAnimationFrame(loop);
+      }
+    }
+
+    function jump() {
+      if (gameOver) {
+        resetGame();
+        startGame();
+      }
+
+      if (!running) {
+        startGame();
+      }
+
+      if (dino.grounded) {
+        dino.vy = dino.jumpPower;
+        dino.grounded = false;
+      }
+    }
+
+    function spawnObstacle() {
+      const tall = Math.random() > 0.55;
+      const cluster = Math.random() > 0.72;
+
+      const h = tall ? 58 : 42;
+      const w = cluster ? 48 : 28;
+
+      obstacles.push({
+        x: W + 20,
+        y: groundY - h,
+        w,
+        h,
+        cluster
+      });
+    }
+
+    function update(dt) {
+      const f = Math.min(dt / 16.67, 2);
+
+      score += dt * 0.012 * (speed / 7);
+      speed = Math.min(15, 7 + score / 480);
+
+      groundOffset = (groundOffset + speed * f) % 32;
+
+      dino.vy += dino.gravity * f;
+      dino.y += dino.vy * f;
+
+      if (dino.y >= groundY - dino.h) {
+        dino.y = groundY - dino.h;
+        dino.vy = 0;
+        dino.grounded = true;
+      }
+
+      if (dino.grounded) {
+        dino.legPhase += 0.27 * f * (speed / 7);
+      }
+
+      spawnTimer += dt;
+
+      if (spawnTimer >= nextSpawn) {
+        spawnObstacle();
+        spawnTimer = 0;
+
+        const base = Math.max(680, 1250 - speed * 38);
+        nextSpawn = base + Math.random() * 700;
+      }
+
+      obstacles.forEach(o => {
+        o.x -= speed * f;
+      });
+
+      obstacles = obstacles.filter(o => o.x + o.w > -20);
+
+      clouds.forEach(c => {
+        c.x -= 0.35 * c.s * f;
+
+        if (c.x < -100) {
+          c.x = W + 120 + Math.random() * 200;
+        }
+      });
+
+      checkCollision();
+
+      highScore = Math.max(highScore, Math.floor(score));
+
+      updateUI();
+    }
+
+    function checkCollision() {
+      const hitbox = {
+        x: dino.x + 8,
+        y: dino.y + 5,
+        w: dino.w - 14,
+        h: dino.h - 8
+      };
+
+      for (const o of obstacles) {
+        const ox = o.x + 4;
+        const oy = o.y + 3;
+        const ow = o.w - 8;
+        const oh = o.h - 3;
+
+        const collided =
+          hitbox.x < ox + ow &&
+          hitbox.x + hitbox.w > ox &&
+          hitbox.y < oy + oh &&
+          hitbox.y + hitbox.h > oy;
+
+        if (collided) {
+          endGame();
+          break;
+        }
+      }
+    }
+
+    function endGame() {
+      running = false;
+      gameOver = true;
+
+      showMessage(
+        "GAME OVER",
+        "按空白鍵、↑ 或點擊畫面重新開始"
+      );
+    }
+
+    function updateUI() {
+      scoreEl.textContent = String(Math.floor(score)).padStart(5, "0");
+      highScoreEl.textContent = String(highScore).padStart(5, "0");
+      speedText.textContent = "速度 " + (speed / 7).toFixed(1) + "×";
+    }
+
+    function drawCloud(x, y, s) {
+      ctx.save();
+      ctx.globalAlpha = 0.22;
+      ctx.fillStyle = "#777";
+
+      ctx.beginPath();
+      ctx.arc(x, y + 8 * s, 15 * s, 0, Math.PI * 2);
+      ctx.arc(x + 19 * s, y, 21 * s, 0, Math.PI * 2);
+      ctx.arc(x + 43 * s, y + 9 * s, 14 * s, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.restore();
+    }
+
+    function drawDino() {
+      const x = dino.x;
+      const y = dino.y;
+
+      ctx.fillStyle = "#222";
+
+      // 尾巴
+      ctx.beginPath();
+      ctx.moveTo(x + 8, y + 25);
+      ctx.lineTo(x - 19, y + 13);
+      ctx.lineTo(x + 5, y + 36);
+      ctx.fill();
+
+      // 身體
+      ctx.fillRect(x + 5, y + 19, 28, 27);
+
+      // 頭
+      ctx.fillRect(x + 25, y + 2, 22, 25);
+
+      // 嘴
+      ctx.fillRect(x + 39, y + 18, 13, 8);
+
+      // 手
+      ctx.fillRect(x + 27, y + 29, 15, 5);
+      ctx.fillRect(x + 39, y + 29, 4, 10);
+
+      // 腿
+      if (!dino.grounded) {
+        ctx.fillRect(x + 10, y + 43, 7, 9);
+        ctx.fillRect(x + 27, y + 43, 7, 9);
+      } else if (Math.sin(dino.legPhase) > 0) {
+        ctx.fillRect(x + 9, y + 43, 7, 9);
+        ctx.fillRect(x + 27, y + 43, 12, 5);
+      } else {
+        ctx.fillRect(x + 10, y + 43, 12, 5);
+        ctx.fillRect(x + 29, y + 43, 7, 9);
+      }
+
+      // 眼睛
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(x + 36, y + 7, 4, 4);
+    }
+
+    function drawCactus(o) {
+      ctx.fillStyle = "#222";
+
+      const x = o.x;
+      const y = o.y;
+      const stemW = o.cluster ? 13 : 12;
+
+      ctx.fillRect(x + 8, y, stemW, o.h);
+
+      ctx.fillRect(x, y + 17, 10, 8);
+      ctx.fillRect(x, y + 9, 7, 17);
+
+      ctx.fillRect(x + 19, y + 27, 10, 8);
+      ctx.fillRect(x + 24, y + 18, 6, 17);
+
+      if (o.cluster) {
+        ctx.fillRect(x + 31, y + 13, 11, o.h - 13);
+        ctx.fillRect(x + 40, y + 25, 8, 7);
+      }
+    }
+
+    function drawGround() {
+      ctx.strokeStyle = "#222";
+      ctx.lineWidth = 2;
+
+      ctx.beginPath();
+      ctx.moveTo(0, groundY + 1);
+      ctx.lineTo(W, groundY + 1);
+      ctx.stroke();
+
+      ctx.globalAlpha = 0.35;
+      ctx.strokeStyle = "#777";
+      ctx.lineWidth = 1;
+
+      for (let x = -groundOffset; x < W; x += 32) {
+        ctx.beginPath();
+        ctx.moveTo(x, groundY + 13);
+        ctx.lineTo(x + 11, groundY + 13);
+        ctx.stroke();
+      }
+
+      ctx.globalAlpha = 1;
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, W, H);
+
+      clouds.forEach(c => drawCloud(c.x, c.y, c.s));
+      drawGround();
+
+      obstacles.forEach(drawCactus);
+      drawDino();
+    }
+
+    function loop(now) {
+      if (!running) {
+        draw();
+        return;
+      }
+
+      const dt = now - lastTime;
+      lastTime = now;
+
+      update(dt);
+      draw();
+
+      if (running) {
+        requestAnimationFrame(loop);
+      }
+    }
+
+    document.addEventListener("keydown", event => {
+      if (event.code === "Space" || event.code === "ArrowUp") {
+        event.preventDefault();
+        jump();
+      }
+    });
+
+    canvas.addEventListener("pointerdown", jump);
+    jumpBtn.addEventListener("click", jump);
+
+    restartBtn.addEventListener("click", () => {
+      resetGame();
+      startGame();
+    });
+
+    resetGame();
+  </script>
+</body>
+</html>
